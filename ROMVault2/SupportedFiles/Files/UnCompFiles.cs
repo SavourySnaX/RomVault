@@ -21,7 +21,7 @@ namespace ROMVault2.SupportedFiles.Files
             Buffer1 = new byte[Buffersize];
         }
 
-        public static int CheckSumRead(string filename, bool testDeep, out byte[] crc, out byte[] bMD5, out byte[] bSHA1)
+        public static int CheckSumRead(string filename, bool testDeep, out byte[] crc, out byte[] bMD5, out byte[] bSHA1,out long sizeAdjust)
         {
             bMD5 = null;
             bSHA1 = null;
@@ -32,7 +32,9 @@ namespace ROMVault2.SupportedFiles.Files
             ThreadCRC tcrc32 = null;
             ThreadMD5 tmd5 = null;
             ThreadSHA1 tsha1 = null;
+            bool match = false;
 
+            sizeAdjust = 0;
             try
             {
                 int errorCode = IO.FileStream.OpenFileRead(filename, out ds);
@@ -55,6 +57,39 @@ namespace ROMVault2.SupportedFiles.Files
                 int sizebuffer = sizeNext;
                 sizetogo -= sizeNext;
                 bool whichBuffer = true;
+
+                // Check for header no-intro style
+                byte[] cmp1 = new byte[] { 0x41, 0x54, 0x41, 0x52, 0x49, 0x37, 0x38, 0x30, 0x30 };
+                byte[] cmp60 = new byte[] { 0x00,0x00,0x00,0x00,0x41,0x43,0x54,0x55,0x41,0x4C,0x20,0x43,0x41,0x52,0x54,0x20,0x44,0x41,0x54,0x41,0x20,0x53,0x54,0x41,0x52,0x54,0x53,0x20,0x48,0x45,0x52,0x45 };
+
+                match = true;
+                for (int a=0;a<cmp1.Length;a++)
+                {
+                    if (Buffer0[1+a]!=cmp1[a])
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match)
+                {
+                    for (int a = 0; a < cmp60.Length; a++)
+                    {
+                        if (Buffer0[0x60 + a] != cmp60[a])
+                        {
+                            match = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (match)
+                {
+                    ReportError.LogOut("TADA");
+                    sizebuffer -= 0x80; // shrink the size of the buffer
+                    sizeAdjust = -0x80;
+                    System.Array.Copy(Buffer0, 0x80, Buffer0, 0, sizebuffer);
+                }
 
                 while (sizebuffer > 0 && !lbuffer.errorState)
                 {

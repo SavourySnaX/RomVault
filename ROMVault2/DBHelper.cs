@@ -255,8 +255,15 @@ namespace ROMVault2
             int retv = ArrByte.iCompare(a.CRC, b.CRC);
 
             if (retv == 0)
-                retv = ULong.iCompare(a.Size, b.Size);
-
+            {
+                ulong? sizeA = a.Size;
+                ulong? sizeB = b.Size;
+                if (a.SizeAdjusted != null)
+                    sizeA += a.SizeAdjusted;
+                if (b.SizeAdjusted != null)
+                    sizeB += b.SizeAdjusted;
+                retv = ULong.iCompare(sizeA, sizeB);
+            }
             return retv;
         }
 

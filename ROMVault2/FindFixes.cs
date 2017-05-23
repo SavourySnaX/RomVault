@@ -52,7 +52,13 @@ namespace ROMVault2
                 {
                     if (romIndex1 % 100 == 0) _bgw.ReportProgress(romIndex1);
 
-                    if (!ArrByte.bCompare(lstRomTableSortedCRCSize[romIndex0].CRC,lstRomTableSortedCRCSize[romIndex1].CRC) || lstRomTableSortedCRCSize[romIndex0].Size != lstRomTableSortedCRCSize[romIndex1].Size)
+                    ulong? sizeA = lstRomTableSortedCRCSize[romIndex0].Size;
+                    ulong? sizeB = lstRomTableSortedCRCSize[romIndex1].Size;
+                    if (lstRomTableSortedCRCSize[romIndex0].SizeAdjusted != null)
+                        sizeA += lstRomTableSortedCRCSize[romIndex0].SizeAdjusted;
+                    if (lstRomTableSortedCRCSize[romIndex1].SizeAdjusted != null)
+                        sizeB += lstRomTableSortedCRCSize[romIndex1].SizeAdjusted;
+                    if (!ArrByte.bCompare(lstRomTableSortedCRCSize[romIndex0].CRC,lstRomTableSortedCRCSize[romIndex1].CRC) || sizeA != sizeB)
                     {
                         ListCheck(lstRomTableSortedCRCSize, romIndex0, romIndex1 - romIndex0);
                         romIndex0 = romIndex1;

@@ -177,6 +177,9 @@ namespace ROMVault2
                                                        Size = checkZ.UncompressedSize(i),
                                                        CRC = checkZ.CRC32(i)
                                                    };
+                                tFile.SizeAdjusted = checkZ.AdjustmentSize(i);
+                                if (tFile.SizeAdjusted != null)
+                                    tFile.FileStatusSet(FileStatus.HeaderVerified);
                                 // all 3 levels read the CRC from the ZIP header
                                 tFile.SetStatus(chechingDatStatus, GotStatus.Got);
                                 tFile.FileStatusSet(FileStatus.SizeFromHeader | FileStatus.CRCFromHeader);
@@ -790,7 +793,8 @@ namespace ROMVault2
         private static void DeepScanFile(string directory, RvFile tFile)
         {
             string filename = Path.Combine(directory, tFile.Name);
-            int errorCode = UnCompFiles.CheckSumRead(filename, true, out tFile.CRC, out tFile.MD5, out tFile.SHA1);
+            long sizeAdjust = 0;
+            int errorCode = UnCompFiles.CheckSumRead(filename, true, out tFile.CRC, out tFile.MD5, out tFile.SHA1,out sizeAdjust);
             if (errorCode == 32)
             {
                 tFile.GotStatus = GotStatus.FileLocked;
@@ -801,6 +805,11 @@ namespace ROMVault2
                 ReportError.Show("File: " + filename + " Error: " + new Win32Exception(errorCode).Message + ". Scan Aborted.");
                 _fileErrorAbort = true;
                 return;
+            }
+            if (sizeAdjust != 0)
+            {
+                tFile.SizeAdjusted = (ulong)sizeAdjust;
+                tFile.FileStatusSet(FileStatus.HeaderVerified);
             }
             tFile.FileStatusSet(FileStatus.SizeVerified | FileStatus.CRCVerified | FileStatus.SHA1Verified | FileStatus.MD5Verified);
         }

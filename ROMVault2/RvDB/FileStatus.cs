@@ -30,6 +30,8 @@ namespace ROMVault2.RvDB
         SHA1Verified = 0x00040000,
         MD5Verified = 0x00080000,
         SHA1CHDVerified = 0x00100000,
-        MD5CHDVerified = 0x00200000
+        MD5CHDVerified = 0x00200000,
+
+        HeaderVerified = 0x00400000     // Indicates we matched this file via a header check (so use the size adjust when comparing fileSizes)
     }
 }

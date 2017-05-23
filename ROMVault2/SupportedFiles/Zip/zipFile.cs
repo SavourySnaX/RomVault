@@ -41,8 +41,10 @@ namespace ROMVault2.SupportedFiles.Zip
             private ushort _lastModFileTime;
             private ushort _lastModFileDate;
             public byte[] CRC { get; private set; }
+            public byte[] noHeaderCRC { get; private set; }
             private ulong _compressedSize;
             public ulong UncompressedSize { get; private set; }
+            public long AdjustSize { get; private set; }
             public ulong RelativeOffsetOfLocalHeader; // only in centeral directory
 
             private ulong _crc32Location;
@@ -70,6 +72,7 @@ namespace ROMVault2.SupportedFiles.Zip
                 _lastModFileDate = 8600;
 
                 FileName = filename;
+                AdjustSize = 0;
             }
 
 
@@ -96,6 +99,7 @@ namespace ROMVault2.SupportedFiles.Zip
                     _lastModFileTime = br.ReadUInt16();
                     _lastModFileDate = br.ReadUInt16();
                     CRC = ReadCRC(br);
+                    noHeaderCRC = null;
 
                     _compressedSize = br.ReadUInt32();
                     UncompressedSize = br.ReadUInt32();
@@ -694,7 +698,7 @@ namespace ROMVault2.SupportedFiles.Zip
             public void LocalFileCheck()
             {
                 if (FileStatus != ZipReturn.ZipUntested) return;
-
+                bool match = false;
                 try
                 {
                     Stream sInput = null;
@@ -726,6 +730,7 @@ namespace ROMVault2.SupportedFiles.Zip
                     ulong sizetogo = UncompressedSize;
 
                     ThreadLoadBuffer lbuffer = new ThreadLoadBuffer(sInput);
+                    ThreadCRC tcrcNoHeader32 = new ThreadCRC();
                     ThreadCRC tcrc32 = new ThreadCRC();
                     ThreadMD5 tmd5 = new ThreadMD5();
                     ThreadSHA1 tsha1 = new ThreadSHA1();
@@ -737,6 +742,33 @@ namespace ROMVault2.SupportedFiles.Zip
                     sizetogo -= (ulong)sizeNext;
                     bool whichBuffer = true;
 
+                    // Check for header no-intro style
+                    byte[] cmp1 = new byte[] { 0x41, 0x54, 0x41, 0x52, 0x49, 0x37, 0x38, 0x30, 0x30 };
+                    byte[] cmp60 = new byte[] { 0x00, 0x00, 0x00, 0x00, 0x41, 0x43, 0x54, 0x55, 0x41, 0x4C, 0x20, 0x43, 0x41, 0x52, 0x54, 0x20, 0x44, 0x41, 0x54, 0x41, 0x20, 0x53, 0x54, 0x41, 0x52, 0x54, 0x53, 0x20, 0x48, 0x45, 0x52, 0x45 };
+
+                    match = true;
+                    for (int a = 0; a < cmp1.Length; a++)
+                    {
+                        if (_buffer0[1 + a] != cmp1[a])
+                        {
+                            match = false;
+                            break;
+                        }
+                    }
+                    if (match)
+                    {
+                        for (int a = 0; a < cmp60.Length; a++)
+                        {
+                            if (_buffer0[0x60 + a] != cmp60[a])
+                            {
+                                match = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    bool firstTime = true;
+
                     while (sizebuffer > 0 && !lbuffer.errorState)
                     {
                         sizeNext = sizetogo > Buffersize ? Buffersize : (int)sizetogo;
@@ -745,13 +777,30 @@ namespace ROMVault2.SupportedFiles.Zip
                             lbuffer.Trigger(whichBuffer ? _buffer1 : _buffer0, sizeNext);
 
                         byte[] buffer = whichBuffer ? _buffer0 : _buffer1;
-                        tcrc32.Trigger(buffer, sizebuffer);
-                        tmd5.Trigger(buffer, sizebuffer);
-                        tsha1.Trigger(buffer, sizebuffer);
 
+                        if (firstTime && match)
+                        {
+                            firstTime = false;
+                            byte[] newBuffer = new byte[buffer.Length];
+                            tcrc32.Trigger(buffer, sizebuffer); // keep original crc intact
+                            sizebuffer -= 0x80; // shrink the size of the buffer
+                            AdjustSize = -0x80;
+                            System.Array.Copy(_buffer0, 0x80, newBuffer, 0, sizebuffer);
+                            tcrcNoHeader32.Trigger(newBuffer, sizebuffer);
+                            tmd5.Trigger(newBuffer, sizebuffer);
+                            tsha1.Trigger(newBuffer, sizebuffer);
+                        }
+                        else
+                        {
+                            tcrc32.Trigger(buffer, sizebuffer);
+                            tcrcNoHeader32.Trigger(buffer, sizebuffer);
+                            tmd5.Trigger(buffer, sizebuffer);
+                            tsha1.Trigger(buffer, sizebuffer);
+                        }
                         if (sizeNext > 0)
                             lbuffer.Wait();
                         tcrc32.Wait();
+                        tcrcNoHeader32.Wait();
                         tmd5.Wait();
                         tsha1.Wait();
 
@@ -770,6 +819,7 @@ namespace ROMVault2.SupportedFiles.Zip
 
                         lbuffer.Dispose();
                         tcrc32.Dispose();
+                        tcrcNoHeader32.Dispose();
                         tmd5.Dispose();
                         tsha1.Dispose();
                         FileStatus = ZipReturn.ZipDecodeError;
@@ -778,15 +828,18 @@ namespace ROMVault2.SupportedFiles.Zip
 
                     lbuffer.Finish();
                     tcrc32.Finish();
+                    tcrcNoHeader32.Finish();
                     tmd5.Finish();
                     tsha1.Finish();
 
                     byte[] testcrc = tcrc32.Hash;
+                    noHeaderCRC = tcrcNoHeader32.Hash;
                     md5 = tmd5.Hash;
                     sha1 = tsha1.Hash;
 
                     lbuffer.Dispose();
                     tcrc32.Dispose();
+                    tcrcNoHeader32.Dispose();
                     tmd5.Dispose();
                     tsha1.Dispose();
 
@@ -864,12 +917,13 @@ namespace ROMVault2.SupportedFiles.Zip
 
         public string Filename(int i) { return _localFiles[i].FileName; }
         public ulong UncompressedSize(int i) { return _localFiles[i].UncompressedSize; }
+        public ulong? AdjustmentSize(int i) { if (_localFiles[i].AdjustSize == 0) return null; return (ulong)_localFiles[i].AdjustSize; }
         public ulong? LocalHeader(int i)
         {
             return ((_localFiles[i]._generalPurposeBitFlag & 8) == 0) ? (ulong?)_localFiles[i].RelativeOffsetOfLocalHeader : null;
         }
         public ZipReturn FileStatus(int i) { return _localFiles[i].FileStatus; }
-        public byte[] CRC32(int i) { return _localFiles[i].CRC; }
+        public byte[] CRC32(int i) { return _localFiles[i].noHeaderCRC; }
         public byte[] MD5(int i) { return _localFiles[i].md5; }
         public byte[] SHA1(int i) { return _localFiles[i].sha1; }
 

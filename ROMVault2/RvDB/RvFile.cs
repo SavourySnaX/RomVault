@@ -28,6 +28,7 @@ namespace ROMVault2.RvDB
         public ulong? ZipFileHeaderPosition;
 
         public uint? CHDVersion;
+        public ulong? SizeAdjusted;
 
         public RvFile(FileType type)
             : base(type)
@@ -49,7 +50,8 @@ namespace ROMVault2.RvDB
             Status = 0x80,
             ZipFileIndex = 0x100,
             ZipFileHeader = 0x200,
-            CHDVersion = 0x400
+            CHDVersion = 0x400,
+            SizeAdjust = 0x800
         }
 
         public override void Write(BinaryWriter bw)
@@ -68,6 +70,7 @@ namespace ROMVault2.RvDB
             if (ZipFileIndex >= 0) fFlags |= FileFlags.ZipFileIndex;
             if (ZipFileHeaderPosition != null) fFlags |= FileFlags.ZipFileHeader;
             if (CHDVersion != null) fFlags |= FileFlags.CHDVersion;
+            if (SizeAdjusted != null) fFlags |= FileFlags.SizeAdjust;
 
             bw.Write((UInt16)fFlags);
 
@@ -82,6 +85,7 @@ namespace ROMVault2.RvDB
             if (ZipFileIndex >= 0) bw.Write(ZipFileIndex);
             if (ZipFileHeaderPosition != null) bw.Write((long)ZipFileHeaderPosition);
             if (CHDVersion != null) bw.Write((uint)CHDVersion);
+            if (SizeAdjusted != null) bw.Write((ulong)SizeAdjusted);
 
             bw.Write((uint)_fileStatus);
         }
@@ -102,6 +106,7 @@ namespace ROMVault2.RvDB
             ZipFileIndex = (fFlags & FileFlags.ZipFileIndex) > 0 ? br.ReadInt32() : -1;
             ZipFileHeaderPosition = (fFlags & FileFlags.ZipFileHeader) > 0 ? (ulong?)br.ReadUInt64() : null;
             CHDVersion = (fFlags & FileFlags.CHDVersion) > 0 ? (uint?)br.ReadInt32() : null;
+            SizeAdjusted = (fFlags & FileFlags.SizeAdjust) > 0 ? (ulong?)br.ReadUInt64() : null;
 
             _fileStatus = (FileStatus)br.ReadUInt32();
         }
@@ -114,8 +119,9 @@ namespace ROMVault2.RvDB
             if (!FileStatusIs(FileStatus.MD5FromHeader) && !FileStatusIs(FileStatus.MD5Verified)) MD5 = null;
             if (!FileStatusIs(FileStatus.SHA1CHDFromHeader) && !FileStatusIs(FileStatus.SHA1CHDVerified)) SHA1CHD = null;
             if (!FileStatusIs(FileStatus.MD5CHDFromHeader) && !FileStatusIs(FileStatus.MD5CHDVerified)) MD5CHD = null;
+            if (!FileStatusIs(FileStatus.HeaderVerified)) SizeAdjusted = null;
 
-            FileStatusClear(FileStatus.SizeFromDAT | FileStatus.CRCFromDAT | FileStatus.SHA1FromDAT | FileStatus.MD5FromDAT | FileStatus.SHA1CHDFromDAT | FileStatus.MD5CHDFromDAT);
+            FileStatusClear(FileStatus.SizeFromDAT | FileStatus.CRCFromDAT | FileStatus.SHA1FromDAT | FileStatus.MD5FromDAT | FileStatus.SHA1CHDFromDAT | FileStatus.MD5CHDFromDAT | FileStatus.HeaderVerified);
 
             Merge = "";
             Status = "";
@@ -136,9 +142,10 @@ namespace ROMVault2.RvDB
             if (MD5 == null && tFile.MD5 != null) MD5 = tFile.MD5;
             if (SHA1CHD == null && tFile.SHA1CHD != null) SHA1CHD = tFile.SHA1CHD;
             if (MD5CHD == null && tFile.MD5CHD != null) MD5CHD = tFile.MD5CHD;
+            if (SizeAdjusted == null && tFile.SizeAdjusted != null) SizeAdjusted = tFile.SizeAdjusted;
 
             FileStatusSet(
-                FileStatus.SizeFromDAT | FileStatus.CRCFromDAT | FileStatus.SHA1FromDAT | FileStatus.MD5FromDAT | FileStatus.SHA1CHDFromDAT | FileStatus.MD5CHDFromDAT,
+                FileStatus.SizeFromDAT | FileStatus.CRCFromDAT | FileStatus.SHA1FromDAT | FileStatus.MD5FromDAT | FileStatus.SHA1CHDFromDAT | FileStatus.MD5CHDFromDAT | FileStatus.HeaderVerified,
                 tFile);
 
             Merge = tFile.Merge;
@@ -160,12 +167,13 @@ namespace ROMVault2.RvDB
             if (!FileStatusIs(FileStatus.MD5FromDAT)) MD5 = null;
             if (!FileStatusIs(FileStatus.SHA1CHDFromDAT)) SHA1CHD = null;
             if (!FileStatusIs(FileStatus.MD5CHDFromDAT)) MD5CHD = null;
+            if (!FileStatusIs(FileStatus.HeaderVerified)) SizeAdjusted = null;
 
             CHDVersion = null;
 
             FileStatusClear(
                 FileStatus.SizeFromHeader | FileStatus.CRCFromHeader | FileStatus.SHA1FromHeader | FileStatus.MD5FromHeader | FileStatus.SHA1CHDFromHeader | FileStatus.MD5CHDFromHeader |
-                FileStatus.SizeVerified | FileStatus.CRCVerified | FileStatus.SHA1Verified | FileStatus.MD5Verified | FileStatus.SHA1CHDVerified | FileStatus.MD5CHDVerified);
+                FileStatus.SizeVerified | FileStatus.CRCVerified | FileStatus.SHA1Verified | FileStatus.MD5Verified | FileStatus.SHA1CHDVerified | FileStatus.MD5CHDVerified | FileStatus.HeaderVerified);
 
             return EFile.Keep;
         }
@@ -184,12 +192,13 @@ namespace ROMVault2.RvDB
             if (MD5 == null && tFile.MD5 != null) MD5 = tFile.MD5;
             if (SHA1CHD == null && tFile.SHA1CHD != null) SHA1CHD = tFile.SHA1CHD;
             if (MD5CHD == null && tFile.MD5CHD != null) MD5CHD = tFile.MD5CHD;
+            if (SizeAdjusted == null && tFile.SizeAdjusted != null) SizeAdjusted = tFile.SizeAdjusted;
 
             CHDVersion = tFile.CHDVersion;
 
             FileStatusSet(
                 FileStatus.SizeFromHeader | FileStatus.CRCFromHeader | FileStatus.SHA1FromHeader | FileStatus.MD5FromHeader | FileStatus.SHA1CHDFromHeader | FileStatus.MD5CHDFromHeader |
-                FileStatus.SizeVerified | FileStatus.CRCVerified | FileStatus.SHA1Verified | FileStatus.MD5Verified | FileStatus.SHA1CHDVerified | FileStatus.MD5CHDVerified,
+                FileStatus.SizeVerified | FileStatus.CRCVerified | FileStatus.SHA1Verified | FileStatus.MD5Verified | FileStatus.SHA1CHDVerified | FileStatus.MD5CHDVerified | FileStatus.HeaderVerified,
                 tFile);
 
             ZipFileIndex = tFile.ZipFileIndex;
@@ -212,6 +221,7 @@ namespace ROMVault2.RvDB
                 cf._fileStatus = _fileStatus;
                 cf.SHA1CHD = SHA1CHD;
                 cf.MD5CHD = MD5CHD;
+                cf.SizeAdjusted = SizeAdjusted;
 
                 cf.ZipFileIndex = ZipFileIndex;
                 cf.ZipFileHeaderPosition = ZipFileHeaderPosition;

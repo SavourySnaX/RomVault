@@ -68,7 +68,13 @@ namespace ROMVault2
             if (!isZeroLengthFile)
             {
                 #region check that the in and out file match
-                if (fileOut.FileStatusIs(FileStatus.SizeFromDAT) && fileOut.Size != null && fileIn.Size != fileOut.Size)
+                ulong? outSize = fileOut.Size;
+                ulong? inSize = fileIn.Size;
+                if (fileOut.SizeAdjusted != null)
+                    outSize += fileOut.SizeAdjusted;
+                if (fileIn.SizeAdjusted != null)
+                    inSize += fileIn.SizeAdjusted;
+                if (fileOut.FileStatusIs(FileStatus.SizeFromDAT) && outSize != null && inSize != outSize)
                 {
                     error = "Source and destination Size does not match. Logic Error.";
                     return ReturnCode.LogicError;
@@ -166,6 +172,7 @@ namespace ROMVault2
                         error = "Null File Size found in Fixing File :" + fileNameIn;
                         return ReturnCode.LogicError;
                     }
+                    // StreamSize may not match if fileIn was scanned using header skipping
                     streamSize = (ulong)fileIn.Size;
                     if ((ulong)readStream.Length != streamSize)
                     {
@@ -254,6 +261,7 @@ namespace ROMVault2
             #endregion
 
             byte[] bCRC;
+            byte[] bNoHeaderCRC;
             byte[] bMD5 = null;
             byte[] bSHA1 = null;
             if (!isZeroLengthFile)
@@ -261,12 +269,15 @@ namespace ROMVault2
                 #region Do Data Tranfer
 
                 ThreadCRC tcrc32 =null;
+                ThreadCRC tNoHeaderCRC32 = null;
                 ThreadMD5 tmd5 = null;
                 ThreadSHA1 tsha1 = null;
+                bool firstBlock = true;
 
                 if (!rawCopy)
                 {
                     tcrc32 = new ThreadCRC();
+                    tNoHeaderCRC32 = new ThreadCRC();
                     tmd5 = new ThreadMD5();
                     tsha1 = new ThreadSHA1();
                 }
@@ -327,11 +338,63 @@ namespace ROMVault2
 
                     if (!rawCopy)
                     {
-                        tcrc32.Trigger(_buffer, sizenow);
-                        tmd5.Trigger(_buffer, sizenow);
-                        tsha1.Trigger(_buffer, sizenow);
+                        if (firstBlock)
+                        {
+                            // Check for header no-intro style
+                            byte[] cmp1 = new byte[] { 0x41, 0x54, 0x41, 0x52, 0x49, 0x37, 0x38, 0x30, 0x30 };
+                            byte[] cmp60 = new byte[] { 0x00, 0x00, 0x00, 0x00, 0x41, 0x43, 0x54, 0x55, 0x41, 0x4C, 0x20, 0x43, 0x41, 0x52, 0x54, 0x20, 0x44, 0x41, 0x54, 0x41, 0x20, 0x53, 0x54, 0x41, 0x52, 0x54, 0x53, 0x20, 0x48, 0x45, 0x52, 0x45 };
 
+                            bool match = true;
+                            for (int a = 0; a < cmp1.Length; a++)
+                            {
+                                if (_buffer[1 + a] != cmp1[a])
+                                {
+                                    match = false;
+                                    break;
+                                }
+                            }
+                            if (match)
+                            {
+                                for (int a = 0; a < cmp60.Length; a++)
+                                {
+                                    if (_buffer[0x60 + a] != cmp60[a])
+                                    {
+                                        match = false;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (match)
+                            {
+                                int adjustedSizeNow = sizenow - 0x80;
+                                byte[] newBuffer = new byte[_buffer.Length];
+
+                                tcrc32.Trigger(_buffer, sizenow);
+
+                                Array.Copy(_buffer, 0x80, newBuffer, 0, adjustedSizeNow);
+
+                                tNoHeaderCRC32.Trigger(newBuffer, adjustedSizeNow);
+                                tmd5.Trigger(newBuffer, adjustedSizeNow);
+                                tsha1.Trigger(newBuffer, adjustedSizeNow);
+                            }
+                            else
+                            {
+                                tcrc32.Trigger(_buffer, sizenow);
+                                tNoHeaderCRC32.Trigger(_buffer, sizenow);
+                                tmd5.Trigger(_buffer, sizenow);
+                                tsha1.Trigger(_buffer, sizenow);
+                            }
+                        }
+                        else
+                        {
+                            tcrc32.Trigger(_buffer, sizenow);
+                            tNoHeaderCRC32.Trigger(_buffer, sizenow);
+                            tmd5.Trigger(_buffer, sizenow);
+                            tsha1.Trigger(_buffer, sizenow);
+                        }
                         tcrc32.Wait();
+                        tNoHeaderCRC32.Wait();
                         tmd5.Wait();
                         tsha1.Wait();
                     }
@@ -346,6 +409,7 @@ namespace ROMVault2
                         return ReturnCode.FileSystemError;
                     }
                     sizetogo = sizetogo - (ulong)sizenow;
+                    firstBlock = false;
                 }
                 writeStream.Flush();
 
@@ -359,21 +423,25 @@ namespace ROMVault2
                 {
 
                     tcrc32.Finish();
+                    tNoHeaderCRC32.Finish();
                     tmd5.Finish();
                     tsha1.Finish();
 
                     bCRC = tcrc32.Hash;
+                    bNoHeaderCRC = tNoHeaderCRC32.Hash;
                     bMD5 = tmd5.Hash;
                     bSHA1 = tsha1.Hash;
 
                     tcrc32.Dispose();
+                    tNoHeaderCRC32.Dispose();
                     tmd5.Dispose();
                     tsha1.Dispose();
                 }
-                // if we raw copied and the source file has been FileChecked then we can trust the checksums in the source file
+                // if we raw copied and the source file has been FileChecked then we can trust the checksums in the source file - issue here if noheader
                 else
                 {
                     bCRC = ArrByte.Copy(fileIn.CRC);
+                    bNoHeaderCRC = bCRC;
                     if (fileIn.FileStatusIs(FileStatus.MD5Verified)) bMD5 = ArrByte.Copy(fileIn.MD5);
                     if (fileIn.FileStatusIs(FileStatus.SHA1Verified)) bSHA1 = ArrByte.Copy(fileIn.SHA1);
                 }
@@ -410,6 +478,7 @@ namespace ROMVault2
                     zipFileOut.ZipFileAddDirectory();
                 }
                 bCRC = VarFix.CleanMD5SHA1("00000000", 8);
+                bNoHeaderCRC = bCRC;
                 bMD5 = VarFix.CleanMD5SHA1("d41d8cd98f00b204e9800998ecf8427e", 32);
                 bSHA1 = VarFix.CleanMD5SHA1("da39a3ee5e6b4b0d3255bfef95601890afd80709", 40);
             }
@@ -441,7 +510,7 @@ namespace ROMVault2
 
                 if (!rawCopy)
                 {
-                    if (!ArrByte.bCompare(bCRC, fileIn.CRC))
+                    if (!ArrByte.bCompare(bNoHeaderCRC, fileIn.CRC))
                     {
                         fileIn.GotStatus = GotStatus.Corrupt;
                         error = "Source CRC does not match Source Data stream, corrupt Zip";
@@ -561,7 +630,7 @@ namespace ROMVault2
                 fileOut.FileStatusSet(FileStatus.SizeFromHeader | FileStatus.CRCFromHeader);
             }
 
-            if (fileOut.FileStatusIs(FileStatus.CRCFromDAT) && fileOut.CRC != null && !ArrByte.bCompare(fileOut.CRC, bCRC))
+            if (fileOut.FileStatusIs(FileStatus.CRCFromDAT) && fileOut.CRC != null && !ArrByte.bCompare(fileOut.CRC, bNoHeaderCRC))
             {
                 //Rollback the file
                 if (fileOut.FileType == FileType.ZipFile)
@@ -572,7 +641,7 @@ namespace ROMVault2
                 return ReturnCode.DestinationCheckSumError;
             }
 
-            fileOut.CRC = bCRC;
+            fileOut.CRC = bNoHeaderCRC;
             if (!rawCopy || fileIn.FileStatusIs(FileStatus.CRCVerified))
                 fileOut.FileStatusSet(FileStatus.CRCVerified);
 
@@ -613,6 +682,9 @@ namespace ROMVault2
             if (fileIn.Size != null)
             {
                 fileOut.Size = fileIn.Size;
+                fileOut.SizeAdjusted = fileIn.SizeAdjusted;
+                if (fileOut.SizeAdjusted != null)
+                    fileOut.FileStatusSet(FileStatus.HeaderVerified);
                 fileOut.FileStatusSet(FileStatus.SizeVerified);
             }
 
